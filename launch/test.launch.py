@@ -17,6 +17,12 @@ def generate_launch_description() -> LaunchDescription:
     package_path = get_package_share_path('final_project')
     mapping_params_file_path = str(package_path / 'config/mapping_params.yaml')
 
+    scenario_arg = DeclareLaunchArgument(
+        name='scenario',
+        default_value=str(1),
+        description='The number of the scenario')
+    launch_description.add_action(scenario_arg)
+
     group = GroupAction([
         PushRosNamespace(LaunchConfiguration('vehicle_name')),
         Node(executable='mapper.py',
@@ -25,7 +31,11 @@ def generate_launch_description() -> LaunchDescription:
                  LaunchConfiguration('mapping_params',
                                      default=mapping_params_file_path)
              ]),
-        Node(executable='scenario_node.py', package='final_project'),
+        Node(executable='scenario_node.py',
+             package='final_project',
+             parameters=[{
+                 'scenario': LaunchConfiguration('scenario')
+             }]),
     ])
     launch_description.add_action(group)
     return launch_description

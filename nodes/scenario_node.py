@@ -2,6 +2,11 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+
+from ament_index_python.packages import get_package_share_path
+import os
+import yaml
+
 from geometry_msgs.msg import Polygon, Point32, Point
 from final_project.msg import PolygonsStamped
 from visualization_msgs.msg import MarkerArray, Marker
@@ -10,7 +15,15 @@ from visualization_msgs.msg import MarkerArray, Marker
 class ScenarioNode(Node):
 
     def __init__(self):
-        super().__init__(node_name='occupancy_grid')
+        super().__init__(node_name='scenario_node')
+
+        self.declare_parameters(namespace='',
+                                parameters=[('scenario',
+                                             rclpy.Parameter.Type.INTEGER)])
+        param = self.get_parameter('scenario')
+        self.scenario = param.value
+        self.get_logger().info(f'Using scenario #{self.scenario}.')
+        self.read_scenario_description()
 
         self.obstacles_pub = self.create_publisher(msg_type=PolygonsStamped,
                                                    topic='obstacles',
@@ -70,6 +83,17 @@ class ScenarioNode(Node):
 
         self.obstacles_pub.publish(polygons_msg)
         self.marker_pub.publish(marker_array_msg)
+
+    def read_scenario_description(self):
+        filepath = os.path.join(get_package_share_path('final_project'),
+                                f'config/scenario_{self.scenario}.yaml')
+        self.get_logger().info(filepath)
+
+        with open(filepath, 'r') as f:
+            data = yaml.safe_load(f)
+            for obstacle in data['obstacles']:
+                thickness = obstacle['thickness']
+                self.get_logger().info(f"Wall thickness: {thickness}")
 
 
 def main():

@@ -16,7 +16,7 @@ OCCUPIED = 100
 class MapperNode(Node):
 
     def __init__(self):
-        super().__init__(node_name='occupancy_grid')
+        super().__init__(node_name='mapper')
 
         self.tank_size_x = None
         self.tank_size_y = None
