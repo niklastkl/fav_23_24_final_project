@@ -22,6 +22,8 @@ install(
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PolygonsStamped.msg"
+  "msg/Viewpoint.msg"
+  "msg/Viewpoints.msg"
   DEPENDENCIES builtin_interfaces std_msgs geometry_msgs
 )
 
