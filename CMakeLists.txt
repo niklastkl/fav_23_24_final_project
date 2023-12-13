@@ -10,6 +10,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 install(PROGRAMS
   nodes/mapper.py
+  nodes/path_planner.py
   nodes/scenario_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
