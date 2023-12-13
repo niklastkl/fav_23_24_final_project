@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import numpy as np
 import rclpy
+from final_project.msg import Viewpoints
 from geometry_msgs.msg import Point, Pose
 from nav_msgs.msg import MapMetaData, OccupancyGrid
 from rclpy.node import Node
@@ -55,27 +56,47 @@ class PathPlanner(Node):
 
     def __init__(self):
         super().__init__(node_name='path_planner')
-        self.test_grid_pub = self.create_publisher(OccupancyGrid, 'test_grid',
-                                                   1)
         self.path_marker: Marker
         self.init_path_marker()
-        self.path_marker_pub = self.create_publisher(Marker, '~/marker', 10)
-        self.waypoints = [
-            [1.5, 0.5],
-            [0.5, 0.75],
-            [0.5, 3.25],
-            [1.5, 3.5],
-        ]
+        self.path_marker_pub = self.create_publisher(Marker, '~/marker', 1)
+        self.waypoints = []
         self.grid_map_sub = self.create_subscription(OccupancyGrid,
                                                      'occupancy_grid',
                                                      self.on_occupancy_grid, 1)
-        self.occupancy_grid = self.create_test_grid()
-        self.occupancy_matrix = occupancy_grid_to_matrix(self.occupancy_grid)
-        self.timer = self.create_timer(0.5, self.on_timer)
+        self.viewpoints_sub = self.create_subscription(Viewpoints, 'viewpoints',
+                                                       self.on_viewpoints, 1)
+        self.occupancy_grid: OccupancyGrid = None
+        self.occupancy_matrix: np.ndarray = None
+
+    def on_viewpoints(self, msg: Viewpoints):
+        waypoints = []
+        for viewpoint in msg.viewpoints:
+            if viewpoint.completed:
+                continue
+            p = viewpoint.pose.position
+            waypoints.append([p.x, p.y])
+        self.waypoints = waypoints
 
     def on_occupancy_grid(self, msg: OccupancyGrid):
         self.occupancy_grid = msg
         self.occupancy_matrix = occupancy_grid_to_matrix(self.occupancy_grid)
+        segments = self.compute_path_segments()
+        if not segments:
+            self.get_logger().warn(
+                'Could not create any path segment. '
+                'Maybe no waypoints have been received yet.',
+                throttle_duration_sec=5.0)
+            return
+        collision_indices = self.compute_path_collisions(segments)
+        collision_detected = bool(collision_indices)
+
+        if not collision_detected:
+            self.get_logger().info('Path is collision free :-)')
+        else:
+            self.get_logger().info(
+                f'Collisions in segments: {collision_indices}')
+        self.publish_path_marker(segments)
+        self.occupancy_grid.data = self.occupancy_matrix.flatten()
 
     def init_path_marker(self):
         msg = Marker()
@@ -174,12 +195,14 @@ class PathPlanner(Node):
         return False
 
     def compute_path_segments(self):
-        segments = []
         n = len(self.waypoints)
-        assert (n >= 2)
+        if n < 2:
+            return []
         p0_world = self.waypoints[0]
         prev_point = world_to_matrix(*p0_world,
                                      self.occupancy_grid.info.resolution)
+        self.get_logger().info(f'Start grid: {prev_point}')
+        segments = []
         for i in range(1, n):
             self.get_logger().info(f'Computing path segment {i}/{n-1}')
             point = self.waypoints[i]
@@ -200,23 +223,6 @@ class PathPlanner(Node):
             if segment.detect_collision(self.occupancy_matrix):
                 collision_indices.append(i)
         return collision_indices
-
-    def on_timer(self):
-        self.occupancy_grid = self.create_test_grid()
-        self.occupancy_matrix = occupancy_grid_to_matrix(self.occupancy_grid)
-
-        segments = self.compute_path_segments()
-        collision_indices = self.compute_path_collisions(segments)
-        collision_detected = bool(collision_indices)
-
-        if not collision_detected:
-            self.get_logger().info('Path is collision free :-)')
-        else:
-            self.get_logger().info(
-                f'Collisions in segments: {collision_indices}')
-        self.publish_path_marker(segments)
-        self.occupancy_grid.data = self.occupancy_matrix.flatten()
-        self.test_grid_pub.publish(self.occupancy_grid)
 
 
 def main():
