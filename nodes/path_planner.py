@@ -37,7 +37,7 @@ def occupancy_grid_to_matrix(grid: OccupancyGrid):
 
 
 def world_to_matrix(x, y, grid_size):
-    return [x / grid_size, y / grid_size]
+    return [round(x / grid_size), round(y / grid_size)]
 
 
 def matrix_index_to_world(x, y, grid_size):
