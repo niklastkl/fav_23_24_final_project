@@ -26,6 +26,9 @@ class MapperNode(Node):
         self.num_cells_x = int(self.tank_size_x / self.cell_resolution)
         self.num_cells_y = 2 * self.num_cells_x
 
+        self.map_meta_data = self.get_map_meta_data()
+
+        # initialize map cell array
         # x: columns, y: rows --> switch order here
         self.cells = np.zeros((self.num_cells_y, self.num_cells_x),
                               dtype='int8')
@@ -63,8 +66,6 @@ class MapperNode(Node):
         self.get_logger().info(f'{param.name}={param.value}')
         self.cell_resolution = param.value
 
-        # TODO: Wir wollen eigentlich kein Online Ändern der Parameter, oder?
-
     def on_obstacles(self, msg: PolygonsStamped):
         num_obstacles = len(msg.polygons)
         if not num_obstacles:
@@ -92,15 +93,7 @@ class MapperNode(Node):
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
-
-        meta_data = MapMetaData()
-        meta_data.map_load_time = self.get_clock().now().to_msg()
-        meta_data.resolution = self.cell_resolution
-        meta_data.width = self.num_cells_x
-        meta_data.height = self.num_cells_y
-        # origin is at 0,0,0, same orientation as map frame
-        meta_data.origin = Pose()
-        msg.info = meta_data
+        msg.info = self.map_meta_data
 
         # map data in row-major order, starting with (0,0)
         msg.data = self.cells.flatten()
@@ -113,6 +106,16 @@ class MapperNode(Node):
         cells[0, :] = OCCUPIED
         cells[-1, :] = OCCUPIED
         return cells
+
+    def get_map_meta_data(self) -> MapMetaData:
+        meta_data = MapMetaData()
+        meta_data.map_load_time = self.get_clock().now().to_msg()
+        meta_data.resolution = self.cell_resolution
+        meta_data.width = self.num_cells_x
+        meta_data.height = self.num_cells_y
+        # origin is at 0,0,0, same orientation as map frame
+        meta_data.origin = Pose()
+        return meta_data
 
 
 def main():
