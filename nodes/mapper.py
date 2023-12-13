@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-
-from nav_msgs.msg import OccupancyGrid, MapMetaData
-from geometry_msgs.msg import Pose, Polygon
-from final_project.msg import PolygonsStamped
-
-import numpy as np
 import cv2
+import numpy as np
+import rclpy
+from final_project.msg import PolygonsStamped
+from geometry_msgs.msg import Polygon, Pose
+from nav_msgs.msg import MapMetaData, OccupancyGrid
+from rclpy.node import Node
 
 OCCUPIED = 100
 
@@ -40,7 +37,7 @@ class MapperNode(Node):
             f'{self.num_cells_y} cells in y-direction.')
 
         self.map_pub = self.create_publisher(msg_type=OccupancyGrid,
-                                             topic='grid_map',
+                                             topic='occupancy_grid',
                                              qos_profile=1)
 
         self.obstacle_sub = self.create_subscription(msg_type=PolygonsStamped,
