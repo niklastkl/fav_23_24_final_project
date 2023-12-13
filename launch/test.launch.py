@@ -1,6 +1,6 @@
-from launch_ros.actions import Node, PushRosNamespace
-
 from ament_index_python.packages import get_package_share_path
+from launch_ros.actions import Node, PushROSNamespace
+
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -22,20 +22,36 @@ def generate_launch_description() -> LaunchDescription:
         default_value=str(1),
         description='The number of the scenario')
     launch_description.add_action(scenario_arg)
+    viewpoints_arg = DeclareLaunchArgument(
+        name='viewpoints',
+        default_value=str(0),
+        description='The number of the viewpoints file')
+    launch_description.add_action(viewpoints_arg)
 
     group = GroupAction([
-        PushRosNamespace(LaunchConfiguration('vehicle_name')),
-        Node(executable='mapper.py',
-             package='final_project',
-             parameters=[
-                 LaunchConfiguration('mapping_params',
-                                     default=mapping_params_file_path)
-             ]),
-        Node(executable='scenario_node.py',
-             package='final_project',
-             parameters=[{
-                 'scenario': LaunchConfiguration('scenario')
-             }]),
+        PushROSNamespace(LaunchConfiguration('vehicle_name')),
+        Node(
+            executable='mapper.py',
+            package='final_project',
+            parameters=[
+                LaunchConfiguration('mapping_params',
+                                    default=mapping_params_file_path)
+            ],
+        ),
+        Node(
+            executable='scenario_node.py',
+            package='final_project',
+            parameters=[
+                {
+                    'scenario': LaunchConfiguration('scenario'),
+                    'viewpoints': LaunchConfiguration('viewpoints'),
+                },
+            ],
+        ),
+        Node(
+            executable='path_planner.py',
+            package='final_project',
+        )
     ])
     launch_description.add_action(group)
     return launch_description
