@@ -24,25 +24,6 @@ class State(Enum):
     NORMAL_OPERATION = auto()
 
 
-class PathSegment:
-
-    def __init__(self):
-        self.points = []
-
-        self.has_collision: bool = False
-
-    def world_points(self, grid_size):
-        return [[x[0] * grid_size, x[1] * grid_size] for x in self.points]
-
-    def detect_collision(self, occupancy_matrix):
-        self.has_collision = False
-        for point in self.points:
-            if occupancy_matrix[point[1], point[0]] >= 50:
-                self.has_collision = True
-                break
-        return self.has_collision
-
-
 def occupancy_grid_to_matrix(grid: OccupancyGrid):
     data = np.array(grid.data, dtype=np.uint8)
     data = data.reshape(grid.info.height, grid.info.width)
@@ -57,7 +38,7 @@ def matrix_index_to_world(x, y, grid_size):
     return [x * grid_size, y * grid_size]
 
 
-def multiple_matrix_index_to_world(points, grid_size):
+def multiple_matrix_indeces_to_world(points, grid_size):
     world_points = []
     for point in points:
         world_points.append([point[0] * grid_size, point[1] * grid_size])
@@ -186,7 +167,7 @@ class PathPlanner(Node):
         # Convert back our matrix/grid_map points to world coordinates. Since
         # the grid_map does not contain information about the z-coordinate,
         # the following list of points only contains the x and y component.
-        xy_3d = multiple_matrix_index_to_world(line_points_2d, self.cell_size)
+        xy_3d = multiple_matrix_indeces_to_world(line_points_2d, self.cell_size)
 
         # it might be, that only a single grid point brings us from p0 to p1.
         # in this duplicate this point. this way it is easier to handle.
@@ -407,7 +388,7 @@ class PathPlanner(Node):
         self.set_new_path_future = self.set_path_client.call_async(request)
         return True
 
-    def publish_path_marker(self, segments: list[PathSegment]):
+    def publish_path_marker(self, segments):
         msg = self.path_marker
         world_points = self.segments_to_world_points(segments)
         msg.points = [Point(x=p[0], y=p[1], z=-0.5) for p in world_points]
