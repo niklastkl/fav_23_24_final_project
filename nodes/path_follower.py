@@ -10,6 +10,7 @@ from geometry_msgs.msg import (
 from hippo_msgs.msg import Float64Stamped
 from nav_msgs.msg import Path
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
 
 
@@ -17,8 +18,7 @@ class PathFollower(Node):
 
     def __init__(self):
         super().__init__(node_name='path_follower')
-        self.set_path_service = self.create_service(SetPath, '~/set_path',
-                                                    self.serve_set_path)
+        self.init_services()
         self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
                                                  'vision_pose_cov',
                                                  self.on_pose, 1)
@@ -31,12 +31,24 @@ class PathFollower(Node):
         self.target_index = 0
         self.path: list[PoseStamped] = None
 
+    def init_services(self):
+        self.set_path_service = self.create_service(SetPath, '~/set_path',
+                                                    self.serve_set_path)
+        self.path_finished_service = self.create_service(
+            Trigger, '~/path_finished', self.serve_path_finished)
+
     def serve_set_path(self, request, response):
         self.path = request.path.poses
         self.target_index = 0
         self.get_logger().info(
             f'New path with {len(self.path)} poses has been set.')
         response.success = True
+        return response
+
+    def serve_path_finished(self, request, response: Trigger.Response):
+        self.path = None
+        response.success = True
+        self.get_logger().info('Path finished. Going to idle mode.')
         return response
 
     def on_pose(self, msg: PoseWithCovarianceStamped):
