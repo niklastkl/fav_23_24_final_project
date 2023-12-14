@@ -14,6 +14,7 @@ from geometry_msgs.msg import (
     PoseWithCovarianceStamped,
 )
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -31,6 +32,7 @@ class ScenarioNode(Node):
             ],
         )
         param = self.get_parameter('scenario')
+        self.polygons: list[Polygon] = None
         self.scenario = param.value
         self.get_logger().info(f'Using scenario #{self.scenario}.')
         self.read_scenario_description()
@@ -42,28 +44,65 @@ class ScenarioNode(Node):
         self.viewpoints_pub = self.create_publisher(Viewpoints, 'viewpoints', 1)
 
         self.marker_pub = self.create_publisher(msg_type=MarkerArray,
-                                                topic='markers',
+                                                topic='~/marker_array',
                                                 qos_profile=1)
         self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
                                                  'vision_pose_cov',
                                                  self.on_pose, 1)
+        self.start_service = self.create_service(Trigger, '~/start',
+                                                 self.serve_start)
+        self.reset_service = self.create_service(Trigger, '~/reset',
+                                                 self.serve_reset)
         self.timer = self.create_timer(1.0 / 50, self.on_timer)
         self.finished_viewpoints = False
+        self.previous_close_viewpoint = {'index': -1, 'count': 0}
+        self.running = False
+        self.t_start: rclpy.time.Time
+        self.start_position_reached = False
+
+    def reset(self):
+        for viewpoint in self.viewpoints.viewpoints:
+            viewpoint.completed = False
+        self.previous_close_viewpoint = {'index': -1, 'count': 0}
+        self.start_position_reached = False
+        self.running = False
+
+    def serve_start(self, request, response: Trigger.Response):
+        if self.running:
+            response.success = False
+            response.message = "Already running."
+            return response
+        self.reset()
+        response.success = True
+        self.running = True
+        response.message = "Started."
+        return response
+
+    def serve_reset(self, request, response: Trigger.Response):
+        self.reset()
+        response.success = True
+        response.message = "Reset"
+        return response
 
     def on_pose(self, msg: PoseWithCovarianceStamped):
         pose = msg.pose.pose
         i = self.find_viewpoint_in_tolerance(pose)
         # nothing to do if no viewpoint in tolerance margin
         if i < 0:
+            self.previous_close_viewpoint['index'] = -1
+            self.previous_close_viewpoint['count'] = 0
             return
         if self.is_viewpoint_completed(i, self.viewpoints.viewpoints[i], pose):
             self.viewpoints.viewpoints[i].completed = True
             self.get_logger().info(
                 f'Viewpoint[{i}] completed. Uncompleted waypoints: '
-                f'{self.uncompleted_viewpoints}')
+                f'{self.uncompleted_viewpoints()}')
         uncompleted_waypoints = self.uncompleted_viewpoints()
         if not uncompleted_waypoints:
             self.finished_viewpoints = True
+            self.running = False
+            t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
+            self.get_logger().info(f'Finished after {t:.2f}s')
 
     def wrap_pi(self, value: float):
         """Normalize the angle to the range [-pi; pi]."""
@@ -79,7 +118,8 @@ class ScenarioNode(Node):
 
     def uncompleted_viewpoints(self):
         return [
-            i for i, x in enumerate(self.viewpoints.viewpoints) if x.completed
+            i for i, x in enumerate(self.viewpoints.viewpoints)
+            if not x.completed
         ]
 
     def find_viewpoint_in_tolerance(self, pose: Pose):
@@ -92,79 +132,146 @@ class ScenarioNode(Node):
             # do not consider already completed viewpoints
             if viewpoint.completed:
                 continue
-            p_target = viewpoint.position
-            q = viewpoint.orientation
+            p_target = viewpoint.pose.position
+            q = viewpoint.pose.orientation
             _, _, yaw_target = euler_from_quaternion([q.x, q.y, q.z, q.w])
-            d = math.sqrt((p.x - p_target.y)**2 + (p.y - p_target.y)**2 +
-                          (p.z - p_target.z)**2)
-            yaw_error = self.wrap_pi(abs(yaw - yaw_target))
+            d = math.sqrt((p.x - p_target.x)**2 + (p.y - p_target.y)**2)
+            yaw_error = abs(self.wrap_pi(abs(yaw - yaw_target)))
             if d < position_tolerance and yaw_error < yaw_tolerance:
                 return i
         return -1
 
     def is_viewpoint_completed(self, i, viewpoint: Viewpoint, pose: Pose):
-        return True
+        # ignore waypoints until start position has been reached
+        if not self.start_position_reached:
+            if i != 0:
+                return
+        if self.previous_close_viewpoint['index'] != i:
+            self.previous_close_viewpoint['count'] = 0
+        self.previous_close_viewpoint['index'] = i
+        self.previous_close_viewpoint['count'] += 1
+        completed = self.previous_close_viewpoint['count'] >= 40
+        if completed and not self.start_position_reached:
+            self.start_position_reached = True
+            self.t_start = self.get_clock().now()
+        return completed
+
+    def create_wall_polygons(self, thickness):
+        walls = []
+        walls.append([
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, thickness],
+            [0.0, thickness],
+        ])
+        walls.append([
+            [0.0, 0.0],
+            [0.0, 4.0],
+            [thickness, 4.0],
+            [thickness, 0.0],
+        ])
+        walls.append([
+            [0.0, 4.0],
+            [2.0, 4.0],
+            [2.0, 4.0 - thickness],
+            [0.0, 4.0 - thickness],
+        ])
+        walls.append([[2.0, 4.0], [2.0, 0.0], [2.0 - thickness, 0.0],
+                      [2.0 - thickness, 4.0]])
+        polygons = []
+        for wall in walls:
+            polygon = Polygon()
+            for corner in wall:
+                p = Point32(x=corner[0], y=corner[1], z=-0.5)
+                polygon.points.append(p)
+            polygons.append(polygon)
+        return polygons
+
+    def publish_marker_array(self, markers):
+        self.marker_pub.publish(MarkerArray(markers=markers))
+
+    def create_polygon_markers(self, polygons):
+        stamp = self.get_clock().now().to_msg()
+        markers = []
+        for i, polygon in enumerate(polygons):
+            marker = Marker()
+            for p in polygon.points:
+                marker.points.append(Point(x=p.x, y=p.y, z=p.z))
+            marker.points.append(marker.points[0])
+            marker.type = Marker.LINE_STRIP
+            if not self.running:
+                marker.action = Marker.DELETEALL
+            else:
+                marker.action = Marker.ADD
+            marker.id = i
+            marker.color.r = 1.0
+            marker.color.a = 1.0
+            marker.scale.x = 0.02
+            marker.scale.y = 0.02
+            marker.scale.z = 0.02
+            marker.header.stamp = stamp
+            marker.header.frame_id = 'map'
+            marker.ns = 'obstacles'
+            markers.append(marker)
+        return markers
+
+    def create_viewpoint_marker(self):
+        markers = []
+        viewpoint: Viewpoint
+        stamp = self.get_clock().now().to_msg()
+        for i, viewpoint in enumerate(self.viewpoints.viewpoints):
+            marker = Marker()
+            marker.header.stamp = stamp
+            marker.header.frame_id = 'map'
+            marker.pose = viewpoint.pose
+            if not self.running:
+                marker.action = Marker.DELETEALL
+            else:
+                marker.action = Marker.ADD
+            marker.type = Marker.ARROW
+            marker.id = i
+            marker.ns = 'viewpoints'
+            marker.color.a = 1.0
+            marker.color.g = 1.0 * viewpoint.completed
+            marker.color.r = 1.0 - viewpoint.completed
+            marker.scale.x = 0.3
+            marker.scale.y = 0.1
+            marker.scale.z = 0.1
+            markers.append(marker)
+        return markers
 
     def on_timer(self):
-        wall_thickness = 0.3
-        y_pos = 2.0
-        x_pos = 0.0
-
-        corners_1 = [(x_pos, y_pos), (x_pos + 1.77, 2.0),
-                     (x_pos + 1.0, y_pos + wall_thickness),
-                     (x_pos, y_pos + wall_thickness)]
-        obstacle_list = [corners_1]
-
         polygons_msg = PolygonsStamped()
         polygons_msg.header.stamp = self.get_clock().now().to_msg()
         polygons_msg.header.frame_id = 'map'
+        polygons_msg.polygons = self.polygons + self.create_wall_polygons(0.3)
 
-        marker_array_msg = MarkerArray()
-
-        for obstacle in obstacle_list:
-
-            polygon_i = Polygon()
-            marker_i = Marker()
-
-            for point in obstacle:
-                point_i = Point32()
-                point_i.x = point[0]
-                point_i.y = point[1]
-                polygon_i.points.append(point_i)
-
-                # marker msg wants Point() instead of Point32() ....
-                marker_point = Point()
-                marker_point.x = point[0]
-                marker_point.y = point[1]
-                marker_i.points.append(marker_point)
-
-            marker_i.points.append(marker_i.points[0])
-
-            marker_i.header.frame_id = 'map'
-            marker_i.header.stamp = self.get_clock().now().to_msg()
-            marker_i.type = Marker.LINE_STRIP
-            marker_i.color.r = 1.0
-            marker_i.color.a = 1.0
-            marker_i.scale.x = 0.02
-            # marker_i.scale.y = 0.02
-            marker_array_msg.markers.append(marker_i)
-
-            polygons_msg.polygons.append(polygon_i)
-
-        self.obstacles_pub.publish(polygons_msg)
-        self.marker_pub.publish(marker_array_msg)
-        self.viewpoints_pub.publish(self.viewpoints)
+        if self.running:
+            self.obstacles_pub.publish(polygons_msg)
+            self.viewpoints_pub.publish(self.viewpoints)
+        markers = self.create_polygon_markers(self.polygons)
+        markers.extend(self.create_viewpoint_marker())
+        self.publish_marker_array(markers)
 
     def read_scenario_description(self):
         filepath = os.path.join(get_package_share_path('final_project'),
                                 f'config/scenario_{self.scenario}.yaml')
         self.get_logger().info(filepath)
 
+        def obstacle_to_polygon(obstacle):
+            polygon = Polygon()
+            for corner in obstacle['corners']:
+                p = Point32(x=corner[0], y=corner[1], z=0.0)
+                polygon.points.append(p)
+            return polygon
+
+        polygons = []
         with open(filepath, 'r') as f:
             data = yaml.safe_load(f)
             for obstacle in data['obstacles']:
-                thickness = obstacle['thickness']
-                self.get_logger().info(f"Wall thickness: {thickness}")
+                polygon = obstacle_to_polygon(obstacle)
+                polygons.append(polygon)
+        self.polygons = polygons
 
     def read_viewpoints(self):
         viewpoints = self.get_parameter('viewpoints').value

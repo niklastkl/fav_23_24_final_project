@@ -48,8 +48,19 @@ def generate_launch_description() -> LaunchDescription:
                 },
             ],
         ),
+        Node(executable='path_planner.py',
+             package='final_project',
+             arguments=['--ros-args', '--log-level', 'warn']),
         Node(
-            executable='path_planner.py',
+            executable='path_follower.py',
+            package='final_project',
+        ),
+        Node(
+            executable='position_controller.py',
+            package='final_project',
+        ),
+        Node(
+            executable='yaw_controller.py',
             package='final_project',
         )
     ])

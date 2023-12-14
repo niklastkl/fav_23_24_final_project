@@ -91,6 +91,7 @@ class MapperNode(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
         msg.info = self.map_meta_data
+        msg.info.origin.position.z = -0.5
 
         # map data in row-major order, starting with (0,0)
         msg.data = self.cells.flatten()

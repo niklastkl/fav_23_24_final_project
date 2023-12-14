@@ -1,5 +1,6 @@
 obstacles:
-- thickness: 0.1  # in m
-  length: 0.85    # in m
-  top_right_corner: (0.0, 2.0) 
-  orientation: 0.0  # in degree
+  - corners:
+    - [2.0, 2.0]
+    - [2.0, 1.8]
+    - [1.0, 1.8]
+    - [1.0, 2.0]
