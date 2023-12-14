@@ -8,6 +8,7 @@ from nav_msgs.msg import MapMetaData, OccupancyGrid
 from rclpy.node import Node
 
 OCCUPIED = 100
+DEPTH = -0.5
 
 
 class MapperNode(Node):
@@ -20,16 +21,22 @@ class MapperNode(Node):
         self.cell_resolution = None
         self.init_params()
 
-        self.num_cells_x = int(self.tank_size_x / self.cell_resolution)
-        self.num_cells_y = 2 * self.num_cells_x
+        self.num_cells_x = int(np.round(self.tank_size_x /
+                                        self.cell_resolution))
+        self.num_cells_y = int(np.round(self.tank_size_y /
+                                        self.cell_resolution))
 
         self.map_meta_data = self.get_map_meta_data()
 
         # initialize map cell array
+        # we will keep track of two maps:
+        # 1. map: includes inflated obstacles to account for robot size
+        # 2. map_uninflated: keeps track of original size of obstacles
+
         # x: columns, y: rows --> switch order here
-        self.cells = np.zeros((self.num_cells_y, self.num_cells_x),
-                              dtype='int8')
-        self.cells = self.get_tank_walls(self.cells)
+        empty_map = np.zeros((self.num_cells_y, self.num_cells_x), dtype='int8')
+        self.map = self.get_tank_walls(empty_map)
+        self.map_uninflated = np.copy(self.map)
 
         self.get_logger().info(
             f'Using a cell resolution of {self.cell_resolution} m per cell, ' +
@@ -39,6 +46,11 @@ class MapperNode(Node):
         self.map_pub = self.create_publisher(msg_type=OccupancyGrid,
                                              topic='occupancy_grid',
                                              qos_profile=1)
+
+        self.map_pub_debug = self.create_publisher(
+            msg_type=OccupancyGrid,
+            topic='/occupancy_grid_uninflated',
+            qos_profile=1)
 
         self.obstacle_sub = self.create_subscription(msg_type=PolygonsStamped,
                                                      topic='obstacles',
@@ -69,33 +81,51 @@ class MapperNode(Node):
             return
 
         for obstacle in msg.polygons:
-            self.include_obstacle_in_map(obstacle)
+            self.map_uninflated = self.include_obstacle_in_map(
+                obstacle, np.copy(self.map_uninflated))
 
-        self.publish_map()
+        self.map = self.inflate_obstacles(np.copy(self.map_uninflated))
 
-    def include_obstacle_in_map(self, obstacle: Polygon):
+        self.publish_map(np.copy(self.map), self.map_pub)
+        # publish uninflated map for debugging
+        self.publish_map(np.copy(self.map_uninflated), self.map_pub_debug)
+
+    def include_obstacle_in_map(self, obstacle: Polygon,
+                                cells: np.ndarray) -> np.ndarray:
         num_points = len(obstacle.points)
-        obstacle_cells = np.zeros((num_points, 2), dtype='int8')
+        obstacle_cells = np.zeros((num_points, 2), dtype='uint32')
 
         for index, point in enumerate(obstacle.points):
-            obstacle_cells[index, 0] = int(point.x / self.cell_resolution)
-            obstacle_cells[index, 1] = int(point.y / self.cell_resolution)
+            obstacle_cells[index,
+                           0] = int(round(point.x / self.cell_resolution))
+            obstacle_cells[index,
+                           1] = int(round(point.y / self.cell_resolution))
 
-        img = np.copy(self.cells)
-        self.cells = cv2.fillPoly(img,
-                                  pts=np.int32([obstacle_cells]),
-                                  color=(OCCUPIED))
+        img = cells.astype(dtype='uint8')
+        img_obstacles = cv2.fillPoly(img,
+                                     pts=np.int32([obstacle_cells]),
+                                     color=(OCCUPIED))
 
-    def publish_map(self):
-        msg = OccupancyGrid()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'map'
-        msg.info = self.map_meta_data
-        msg.info.origin.position.z = -0.5
+        return img_obstacles.astype(dtype='int8')
 
-        # map data in row-major order, starting with (0,0)
-        msg.data = self.cells.flatten()
-        self.map_pub.publish(msg)
+    def inflate_obstacles(self, cells: np.ndarray) -> np.ndarray:
+        # robot size is most likely larger than one grid cell
+        # therefore, we need to inflate obstacles and walls
+
+        # opencv wants different data type than occupancy grid map msg
+        img = cells.astype(dtype='uint8')
+
+        # We're inflating the obstacles by ca. 30cm in this example  # TODO
+        dilatation_size = int(np.round(0.3 / self.cell_resolution))
+
+        # kernel = OCCUPIED * np.ones(
+        #     (dilatation_size, dilatation_size), np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                           (dilatation_size, dilatation_size))
+        img_dilated = cv2.dilate(img, kernel, iterations=1)
+
+        # return convert back data type
+        return img_dilated.astype(dtype='int8')
 
     def get_tank_walls(self, cells: np.ndarray) -> np.ndarray:
         # we will set all borders of the grid as occupied
@@ -105,14 +135,23 @@ class MapperNode(Node):
         cells[-1, :] = OCCUPIED
         return cells
 
+    def publish_map(self, data: np.ndarray, pub):
+        msg = OccupancyGrid()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.info = self.map_meta_data
+        msg.data = np.copy(data).flatten()
+        pub.publish(msg)
+
     def get_map_meta_data(self) -> MapMetaData:
         meta_data = MapMetaData()
         meta_data.map_load_time = self.get_clock().now().to_msg()
         meta_data.resolution = self.cell_resolution
         meta_data.width = self.num_cells_x
         meta_data.height = self.num_cells_y
-        # origin is at 0,0,0, same orientation as map frame
+        # origin is at (0,0, our depth), same orientation as map frame
         meta_data.origin = Pose()
+        meta_data.origin.position.z = DEPTH
         return meta_data
 
 

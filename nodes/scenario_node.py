@@ -18,6 +18,8 @@ from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
 from visualization_msgs.msg import Marker, MarkerArray
 
+DEPTH = -0.5
+
 
 class ScenarioNode(Node):
 
@@ -156,37 +158,6 @@ class ScenarioNode(Node):
             self.t_start = self.get_clock().now()
         return completed
 
-    def create_wall_polygons(self, thickness):
-        walls = []
-        walls.append([
-            [0.0, 0.0],
-            [2.0, 0.0],
-            [2.0, thickness],
-            [0.0, thickness],
-        ])
-        walls.append([
-            [0.0, 0.0],
-            [0.0, 4.0],
-            [thickness, 4.0],
-            [thickness, 0.0],
-        ])
-        walls.append([
-            [0.0, 4.0],
-            [2.0, 4.0],
-            [2.0, 4.0 - thickness],
-            [0.0, 4.0 - thickness],
-        ])
-        walls.append([[2.0, 4.0], [2.0, 0.0], [2.0 - thickness, 0.0],
-                      [2.0 - thickness, 4.0]])
-        polygons = []
-        for wall in walls:
-            polygon = Polygon()
-            for corner in wall:
-                p = Point32(x=corner[0], y=corner[1], z=-0.5)
-                polygon.points.append(p)
-            polygons.append(polygon)
-        return polygons
-
     def publish_marker_array(self, markers):
         self.marker_pub.publish(MarkerArray(markers=markers))
 
@@ -244,7 +215,7 @@ class ScenarioNode(Node):
         polygons_msg = PolygonsStamped()
         polygons_msg.header.stamp = self.get_clock().now().to_msg()
         polygons_msg.header.frame_id = 'map'
-        polygons_msg.polygons = self.polygons + self.create_wall_polygons(0.3)
+        polygons_msg.polygons = self.polygons
 
         if self.running:
             self.obstacles_pub.publish(polygons_msg)
@@ -261,7 +232,7 @@ class ScenarioNode(Node):
         def obstacle_to_polygon(obstacle):
             polygon = Polygon()
             for corner in obstacle['corners']:
-                p = Point32(x=corner[0], y=corner[1], z=0.0)
+                p = Point32(x=corner[0], y=corner[1], z=DEPTH)
                 polygon.points.append(p)
             return polygon
 
