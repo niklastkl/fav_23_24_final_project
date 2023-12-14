@@ -25,6 +25,7 @@ class MapperNode(Node):
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.header.frame_id = 'map'
         marker.type = Marker.MESH_RESOURCE
+        marker.ns = 'bluerov'
         marker.pose = msg.pose.pose
         marker.color.b = 0.9
         marker.color.g = 0.5
