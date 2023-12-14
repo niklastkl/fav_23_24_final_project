@@ -19,6 +19,7 @@ class YawController(Node):
 
         # default value for the yaw setpoint
         self.setpoint = math.pi / 2.0
+        self.setpoint_timed_out = True
 
         self.vision_pose_sub = self.create_subscription(
             msg_type=PoseWithCovarianceStamped,
@@ -29,10 +30,16 @@ class YawController(Node):
                                                      topic='~/setpoint',
                                                      callback=self.on_setpoint,
                                                      qos_profile=qos)
+        self.timeout_timer = self.create_timer(0.5, self.on_setpoint_timeout)
 
         self.torque_pub = self.create_publisher(msg_type=ActuatorSetpoint,
                                                 topic='torque_setpoint',
                                                 qos_profile=1)
+
+    def on_setpoint_timeout(self):
+        self.timeout_timer.cancel()
+        self.get_logger().warn('Setpoint timed out. Waiting for new setpoints')
+        self.setpoint_timed_out = True
 
     def wrap_pi(self, value: float):
         """Normalize the angle to the range [-pi; pi]."""
@@ -43,9 +50,15 @@ class YawController(Node):
         return value - range * num_wraps
 
     def on_setpoint(self, msg: Float64Stamped):
+        self.timeout_timer.reset()
+        if self.setpoint_timed_out:
+            self.get_logger().info('Setpoint received! Getting back to work.')
+        self.setpoint_timed_out = False
         self.setpoint = self.wrap_pi(msg.data)
 
     def on_vision_pose(self, msg: PoseWithCovarianceStamped):
+        if self.setpoint_timed_out:
+            return
         # get the vehicle orientation expressed as quaternion
         q = msg.pose.pose.orientation
         # convert the quaternion to euler angles

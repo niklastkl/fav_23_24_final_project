@@ -18,21 +18,28 @@ class PositionController(Node):
                                                 'thrust_setpoint', 1)
         self.position_setpoint_sub = self.create_subscription(
             PointStamped, '~/setpoint', self.on_position_setpoint, 1)
-        self.setpoint = Point(x=0.5, y=0.5, z=-0.5)
+        self.setpoint = Point()
+        self.setpoint_timed_out = True
         self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
                                                  'vision_pose_cov',
                                                  self.on_pose, 1)
+        self.timeout_timer = self.create_timer(0.5, self.on_setpoint_timeout)
         self.pose_counter = 0
-        self.initialized = False
+
+    def on_setpoint_timeout(self):
+        self.timeout_timer.cancel()
+        self.get_logger().warn('setpoint timed out. waiting for new setpoints.')
+        self.setpoint_timed_out = True
 
     def on_position_setpoint(self, msg: PointStamped):
+        self.timeout_timer.reset()
+        if self.setpoint_timed_out:
+            self.get_logger().info('Setpoint received! Getting back to work.')
+        self.setpoint_timed_out = False
         self.setpoint = msg.point
 
     def on_pose(self, msg: PoseWithCovarianceStamped):
-        if not self.initialized:
-            self.pose_counter += 1
-            if self.pose_counter >= 10:
-                self.initialized = True
+        if self.setpoint_timed_out:
             return
         position = msg.pose.pose.position
         q = msg.pose.pose.orientation
