@@ -118,8 +118,7 @@ class MapperNode(Node):
         # We're inflating the obstacles by ca. 30cm in this example  # TODO
         dilatation_size = int(np.round(0.3 / self.cell_resolution))
 
-        # kernel = OCCUPIED * np.ones(
-        #     (dilatation_size, dilatation_size), np.uint8)
+        # We will use a circular kernel, feel free to try other kernel shapes
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
                                            (dilatation_size, dilatation_size))
         img_dilated = cv2.dilate(img, kernel, iterations=1)
