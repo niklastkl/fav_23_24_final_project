@@ -6,6 +6,7 @@ import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_path
 from final_project.msg import PolygonsStamped, Viewpoint, Viewpoints
+from final_project.srv import MoveToStart
 from geometry_msgs.msg import (
     Point,
     Point32,
@@ -13,6 +14,7 @@ from geometry_msgs.msg import (
     Pose,
     PoseWithCovarianceStamped,
 )
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
@@ -39,6 +41,8 @@ class ScenarioNode(Node):
         self.get_logger().info(f'Using scenario #{self.scenario}.')
         self.read_scenario_description()
         self.read_viewpoints()
+        self.init_clients()
+        self.init_services()
 
         self.obstacles_pub = self.create_publisher(msg_type=PolygonsStamped,
                                                    topic='obstacles',
@@ -51,16 +55,29 @@ class ScenarioNode(Node):
         self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
                                                  'vision_pose_cov',
                                                  self.on_pose, 1)
-        self.start_service = self.create_service(Trigger, '~/start',
-                                                 self.serve_start)
-        self.reset_service = self.create_service(Trigger, '~/reset',
-                                                 self.serve_reset)
         self.timer = self.create_timer(1.0 / 50, self.on_timer)
         self.finished_viewpoints = False
         self.previous_close_viewpoint = {'index': -1, 'count': 0}
         self.running = False
         self.t_start: rclpy.time.Time
         self.start_position_reached = False
+        self.vehicle_pose = Pose()
+
+    def init_services(self):
+        self.start_service = self.create_service(Trigger, '~/start',
+                                                 self.serve_start)
+        self.reset_service = self.create_service(Trigger, '~/reset',
+                                                 self.serve_reset)
+
+    def init_clients(self):
+        # require separate cb group to make synchronous service calls
+        cb_group = rclpy.callback_groups.MutuallyExclusiveCallbackGroup()
+        self.start_path_planner_client = self.create_client(
+            Trigger, 'path_planner/start', callback_group=cb_group)
+        self.move_to_start_client = self.create_client(
+            MoveToStart, 'path_planner/move_to_start', callback_group=cb_group)
+        self.stop_path_planner_client = self.create_client(
+            Trigger, 'path_planner/stop', callback_group=cb_group)
 
     def reset(self):
         for viewpoint in self.viewpoints.viewpoints:
@@ -74,6 +91,10 @@ class ScenarioNode(Node):
             response.success = False
             response.message = "Already running."
             return response
+        req = MoveToStart.Request()
+        req.current_pose = self.vehicle_pose
+        req.target_pose = self.viewpoints.viewpoints[0].pose
+        self.move_to_start_client.call(req)
         self.reset()
         response.success = True
         self.running = True
@@ -82,12 +103,14 @@ class ScenarioNode(Node):
 
     def serve_reset(self, request, response: Trigger.Response):
         self.reset()
+        self.stop_path_planner_client.call(Trigger.Request())
         response.success = True
         response.message = "Reset"
         return response
 
     def on_pose(self, msg: PoseWithCovarianceStamped):
         pose = msg.pose.pose
+        self.vehicle_pose = pose
         i = self.find_viewpoint_in_tolerance(pose)
         # nothing to do if no viewpoint in tolerance margin
         if i < 0:
@@ -156,6 +179,7 @@ class ScenarioNode(Node):
         if completed and not self.start_position_reached:
             self.start_position_reached = True
             self.t_start = self.get_clock().now()
+            self.start_path_planner_client.call(Trigger.Request())
         return completed
 
     def publish_marker_array(self, markers):
@@ -269,10 +293,14 @@ class ScenarioNode(Node):
 def main():
     rclpy.init()
     node = ScenarioNode()
+    exec = MultiThreadedExecutor()
+    exec.add_node(node)
     try:
-        rclpy.spin(node)
+        exec.spin()
     except KeyboardInterrupt:
         pass
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == '__main__':
