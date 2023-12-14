@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-import cv2
-import numpy as np
 import rclpy
-from final_project.msg import PolygonsStamped
-from visualization_msgs.msg import Marker
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from rclpy.node import Node
+from visualization_msgs.msg import Marker
 
 
 class MapperNode(Node):
