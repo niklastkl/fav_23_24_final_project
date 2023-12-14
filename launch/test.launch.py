@@ -16,7 +16,7 @@ def generate_launch_description() -> LaunchDescription:
 
     package_path = get_package_share_path('final_project')
     mapping_params_file_path = str(package_path / 'config/mapping_params.yaml')
-    urdf_file_path = str(package_path / 'test.urdf')
+    str(package_path / 'test.urdf')
 
     scenario_arg = DeclareLaunchArgument(
         name='scenario',
@@ -49,9 +49,11 @@ def generate_launch_description() -> LaunchDescription:
                 },
             ],
         ),
-        Node(executable='path_planner.py',
-             package='final_project',
-             arguments=['--ros-args', '--log-level', 'warn']),
+        Node(
+            executable='path_planner.py',
+            package='final_project',
+            # arguments=['--ros-args', '--log-level', 'warn'],
+        ),
         Node(
             executable='path_follower.py',
             package='final_project',
