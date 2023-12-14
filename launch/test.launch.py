@@ -16,6 +16,7 @@ def generate_launch_description() -> LaunchDescription:
 
     package_path = get_package_share_path('final_project')
     mapping_params_file_path = str(package_path / 'config/mapping_params.yaml')
+    urdf_file_path = str(package_path / 'test.urdf')
 
     scenario_arg = DeclareLaunchArgument(
         name='scenario',
@@ -62,7 +63,11 @@ def generate_launch_description() -> LaunchDescription:
         Node(
             executable='yaw_controller.py',
             package='final_project',
-        )
+        ),
+        Node(
+            executable='robot_marker_publisher.py',
+            package='final_project',
+        ),
     ])
     launch_description.add_action(group)
     return launch_description

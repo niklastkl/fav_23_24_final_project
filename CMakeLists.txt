@@ -16,6 +16,7 @@ install(PROGRAMS
   nodes/position_controller.py
   nodes/scenario_node.py
   nodes/yaw_controller.py
+  nodes/robot_marker_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
