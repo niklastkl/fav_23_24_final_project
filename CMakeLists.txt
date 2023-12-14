@@ -29,6 +29,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PolygonsStamped.msg"
   "msg/Viewpoint.msg"
   "msg/Viewpoints.msg"
+  "srv/MoveToStart.srv"
   "srv/SetPath.srv"
   DEPENDENCIES builtin_interfaces std_msgs geometry_msgs nav_msgs
 )
