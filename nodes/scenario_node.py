@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import math
 import os
+from collections import deque
+from statistics import mean
 
 import rclpy
 import yaml
@@ -46,6 +48,9 @@ class ScenarioNode(Node):
         self.init_clients()
         self.init_services()
         self.viewpoint_in_tolerance_index = -1
+        self.completed_queues = [
+            deque([0.0] * 100, maxlen=100) for _ in self.viewpoints.viewpoints
+        ]
 
         self.obstacles_pub = self.create_publisher(msg_type=PolygonsStamped,
                                                    topic='obstacles',
@@ -123,6 +128,11 @@ class ScenarioNode(Node):
         i = self.find_viewpoint_in_tolerance(pose)
         self.viewpoint_in_tolerance_index = i
         # nothing to do if no viewpoint in tolerance margin
+        for j, queue in enumerate(self.completed_queues):
+            if j == i:
+                queue.append(1.0)
+            else:
+                queue.append(0.0)
         if i < 0:
             self.previous_close_viewpoint['index'] = -1
             self.previous_close_viewpoint['count'] = 0
@@ -200,8 +210,9 @@ class ScenarioNode(Node):
         self.previous_close_viewpoint['index'] = i
         self.previous_close_viewpoint['count'] += 1
         self.gauge_pub.publish(
-            Float32(data=self.previous_close_viewpoint['count'] / 40.0))
+            Float32(data=mean(self.completed_queues[i]) / 0.8))
         completed = self.previous_close_viewpoint['count'] >= 40
+        completed = mean(self.completed_queues[i]) > 0.8
         if completed and not self.start_position_reached:
             self.start_position_reached = True
             self.t_start = self.get_clock().now()
