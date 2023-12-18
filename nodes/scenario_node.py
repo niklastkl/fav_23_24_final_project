@@ -43,6 +43,7 @@ class ScenarioNode(Node):
         self.read_viewpoints()
         self.init_clients()
         self.init_services()
+        self.viewpoint_in_tolerance_index = -1
 
         self.obstacles_pub = self.create_publisher(msg_type=PolygonsStamped,
                                                    topic='obstacles',
@@ -112,6 +113,7 @@ class ScenarioNode(Node):
         pose = msg.pose.pose
         self.vehicle_pose = pose
         i = self.find_viewpoint_in_tolerance(pose)
+        self.viewpoint_in_tolerance_index = i
         # nothing to do if no viewpoint in tolerance margin
         if i < 0:
             self.previous_close_viewpoint['index'] = -1
@@ -227,12 +229,18 @@ class ScenarioNode(Node):
             marker.id = i
             marker.ns = 'viewpoints'
             marker.color.a = 1.0
-            marker.color.g = 1.0 * viewpoint.completed
             marker.color.r = 1.0 - viewpoint.completed
+            marker.color.g = 1.0 * viewpoint.completed
             marker.scale.x = 0.3
             marker.scale.y = 0.1
             marker.scale.z = 0.1
             markers.append(marker)
+        i = self.viewpoint_in_tolerance_index
+        if i >= 0 and not self.viewpoints.viewpoints[i].completed:
+            markers[i].color.r = 1.0
+            markers[i].color.g = 1.0
+            markers[i].color.b = 0.0
+
         return markers
 
     def on_timer(self):
