@@ -340,9 +340,8 @@ class ScenarioNode(Node):
         self.polygons = polygons
 
     def read_viewpoints(self):
-        viewpoints = self.get_parameter('viewpoints').value
         path = os.path.join(get_package_share_path('final_project'),
-                            f'config/viewpoints_{viewpoints}.yaml')
+                            f'config/scenario_{self.scenario}.yaml')
         with open(path, 'r') as f:
             data = yaml.safe_load(f)
             self.viewpoints = Viewpoints()
