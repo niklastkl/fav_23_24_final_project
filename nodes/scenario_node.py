@@ -16,6 +16,8 @@ from geometry_msgs.msg import (
 )
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rviz_2d_overlay_msgs.msg import OverlayText
+from std_msgs.msg import Float32
 from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
 from visualization_msgs.msg import Marker, MarkerArray
@@ -49,6 +51,12 @@ class ScenarioNode(Node):
                                                    topic='obstacles',
                                                    qos_profile=1)
         self.viewpoints_pub = self.create_publisher(Viewpoints, 'viewpoints', 1)
+        self.gauge_pub = self.create_publisher(Float32, '~/viewpoint_progress',
+                                               1)
+        self.rviz_overlay_status_pub = self.create_publisher(
+            OverlayText, '~/overlay_status_text', 1)
+        self.rviz_t_finish_pub = self.create_publisher(
+            OverlayText, '~/overlay_t_finish_text', 1)
 
         self.marker_pub = self.create_publisher(msg_type=MarkerArray,
                                                 topic='~/marker_array',
@@ -118,6 +126,7 @@ class ScenarioNode(Node):
         if i < 0:
             self.previous_close_viewpoint['index'] = -1
             self.previous_close_viewpoint['count'] = 0
+            self.gauge_pub.publish(Float32(data=0.0))
             return
         if self.is_viewpoint_completed(i, self.viewpoints.viewpoints[i], pose):
             self.viewpoints.viewpoints[i].completed = True
@@ -129,6 +138,19 @@ class ScenarioNode(Node):
             self.finished_viewpoints = True
             self.running = False
             t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
+            msg = OverlayText()
+            msg.horizontal_alignment = msg.LEFT
+            msg.horizontal_distance = 10
+            msg.vertical_alignment = msg.TOP
+            msg.vertical_distance = 70
+            msg.fg_color.a = 1.0
+            msg.fg_color.g = 1.0
+            msg.line_width = 10
+            msg.text_size = 28.0
+            msg.width = 1000
+            msg.height = 50
+            msg.text = f'Finished after {t:.2f}s'
+            self.rviz_t_finish_pub.publish(msg)
             self.get_logger().info(f'Finished after {t:.2f}s')
 
     def wrap_pi(self, value: float):
@@ -177,6 +199,8 @@ class ScenarioNode(Node):
             self.previous_close_viewpoint['count'] = 0
         self.previous_close_viewpoint['index'] = i
         self.previous_close_viewpoint['count'] += 1
+        self.gauge_pub.publish(
+            Float32(data=self.previous_close_viewpoint['count'] / 40.0))
         completed = self.previous_close_viewpoint['count'] >= 40
         if completed and not self.start_position_reached:
             self.start_position_reached = True
@@ -249,9 +273,37 @@ class ScenarioNode(Node):
         polygons_msg.header.frame_id = 'map'
         polygons_msg.polygons = self.polygons
 
+        status_msg = OverlayText()
+        status_msg.action = status_msg.ADD
+        status_msg.horizontal_alignment = status_msg.LEFT
+        status_msg.horizontal_distance = 10
+        status_msg.vertical_alignment = status_msg.TOP
+        status_msg.vertical_distance = 10
+        status_msg.fg_color.a = 1.0
+        status_msg.fg_color.r = 1.0
+        status_msg.line_width = 10
+        status_msg.text_size = 28.0
+        status_msg.width = 1000
+        status_msg.height = 50
+        status_msg.text = "Not running"
         if self.running:
+            t_finish_msg = OverlayText()
+            t_finish_msg.action = t_finish_msg.DELETE
+            t_finish_msg.width = 1
+            t_finish_msg.height = 1
+            self.rviz_t_finish_pub.publish(t_finish_msg)
+            status_msg.fg_color.r = 1.0
+            status_msg.fg_color.g = 1.0
+            status_msg.fg_color.b = 0.0
             self.obstacles_pub.publish(polygons_msg)
             self.viewpoints_pub.publish(self.viewpoints)
+            status_msg.text = 'Moving to start position.'
+
+            if self.start_position_reached:
+                t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
+                status_msg.text = f'Time: {t:.2f}s'
+        self.rviz_overlay_status_pub.publish(status_msg)
+
         markers = self.create_polygon_markers(self.polygons)
         markers.extend(self.create_viewpoint_marker())
         self.publish_marker_array(markers)
