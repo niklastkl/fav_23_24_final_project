@@ -2,6 +2,7 @@
 import math
 import os
 from collections import deque
+from dataclasses import dataclass
 from statistics import mean
 
 import rclpy
@@ -24,6 +25,13 @@ from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
 from visualization_msgs.msg import Marker, MarkerArray
 
+
+@dataclass
+class ViewpointIndex:
+    current: int = -1
+    previous: int = -1
+
+
 DEPTH = -0.5
 
 
@@ -45,13 +53,26 @@ class ScenarioNode(Node):
         self.get_logger().info(f'Using scenario #{self.scenario}.')
         self.read_scenario_description()
         self.read_viewpoints()
+        self.init_publishers()
         self.init_clients()
         self.init_services()
-        self.viewpoint_in_tolerance_index = -1
-        self.completed_queues = [
+        self.init_overlay_texts()
+        self.viewpoint_index = ViewpointIndex()
+        self.viewpoint_progresses = [
             deque([0.0] * 100, maxlen=100) for _ in self.viewpoints.viewpoints
         ]
 
+        self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
+                                                 'vision_pose_cov',
+                                                 self.on_pose, 1)
+        self.timer = self.create_timer(1.0 / 50, self.on_timer)
+        self.finished_viewpoints = False
+        self.running = False
+        self.t_start: rclpy.time.Time
+        self.start_position_reached = False
+        self.vehicle_pose = Pose()
+
+    def init_publishers(self):
         self.obstacles_pub = self.create_publisher(msg_type=PolygonsStamped,
                                                    topic='obstacles',
                                                    qos_profile=1)
@@ -66,16 +87,6 @@ class ScenarioNode(Node):
         self.marker_pub = self.create_publisher(msg_type=MarkerArray,
                                                 topic='~/marker_array',
                                                 qos_profile=1)
-        self.pose_sub = self.create_subscription(PoseWithCovarianceStamped,
-                                                 'vision_pose_cov',
-                                                 self.on_pose, 1)
-        self.timer = self.create_timer(1.0 / 50, self.on_timer)
-        self.finished_viewpoints = False
-        self.previous_close_viewpoint = {'index': -1, 'count': 0}
-        self.running = False
-        self.t_start: rclpy.time.Time
-        self.start_position_reached = False
-        self.vehicle_pose = Pose()
 
     def init_services(self):
         self.start_service = self.create_service(Trigger, '~/start',
@@ -96,9 +107,12 @@ class ScenarioNode(Node):
     def reset(self):
         for viewpoint in self.viewpoints.viewpoints:
             viewpoint.completed = False
-        self.previous_close_viewpoint = {'index': -1, 'count': 0}
+        self.viewpoint_progresses = [
+            deque([0.0] * 100, maxlen=100) for _ in self.viewpoints.viewpoints
+        ]
         self.start_position_reached = False
         self.running = False
+        self.publish_finish_time_overlay(delete=True)
 
     def serve_start(self, request, response: Trigger.Response):
         if self.running:
@@ -110,8 +124,8 @@ class ScenarioNode(Node):
         req.target_pose = self.viewpoints.viewpoints[0].pose
         self.move_to_start_client.call(req)
         self.reset()
-        response.success = True
         self.running = True
+        response.success = True
         response.message = "Started."
         return response
 
@@ -122,45 +136,85 @@ class ScenarioNode(Node):
         response.message = "Reset"
         return response
 
-    def on_pose(self, msg: PoseWithCovarianceStamped):
-        pose = msg.pose.pose
-        self.vehicle_pose = pose
-        i = self.find_viewpoint_in_tolerance(pose)
-        self.viewpoint_in_tolerance_index = i
-        # nothing to do if no viewpoint in tolerance margin
-        for j, queue in enumerate(self.completed_queues):
-            if j == i:
+    def init_overlay_texts(self):
+        self.init_status_overlay_text()
+        self.init_finish_time_overlay_text()
+
+    def init_status_overlay_text(self):
+        msg = OverlayText()
+        msg.horizontal_alignment = msg.LEFT
+        msg.horizontal_distance = 10
+        msg.vertical_alignment = msg.TOP
+        msg.vertical_distance = 10
+        msg.fg_color.a = 1.0
+        msg.fg_color.g = 1.0
+        msg.line_width = 10
+        msg.text_size = 18.0
+        msg.width = 1000
+        msg.height = 50
+        self.status_overlay_text_msg = msg
+
+    def init_finish_time_overlay_text(self):
+        msg = OverlayText()
+        msg.horizontal_alignment = msg.LEFT
+        msg.horizontal_distance = 10
+        msg.vertical_alignment = msg.TOP
+        msg.vertical_distance = 40
+        msg.fg_color.a = 1.0
+        msg.fg_color.g = 1.0
+        msg.line_width = 10
+        msg.text_size = 18.0
+        msg.width = 1000
+        msg.height = 50
+        self.finish_time_overlay_text_msg = msg
+
+    def publish_viewpoint_progress_gauge(self, i):
+        if i < 0 or i >= len(self.viewpoint_progresses):
+            self.gauge_pub.publish(Float32(data=0.0))
+            return
+        if self.viewpoints.viewpoints[i].completed:
+            self.gauge_pub.publish(Float32(data=0.0))
+            return
+        if not self.running:
+            self.gauge_pub.publish(Float32(data=0.0))
+        queue = self.viewpoint_progresses[self.viewpoint_index.previous]
+        value = min(1.0, max(0.0, mean(queue) / 0.8))
+        self.gauge_pub.publish(Float32(data=value))
+
+    def update_viewpoint_progress(self):
+        for j, queue in enumerate(self.viewpoint_progresses):
+            if j == self.viewpoint_index.current:
                 queue.append(1.0)
             else:
                 queue.append(0.0)
-        if i < 0:
-            self.previous_close_viewpoint['index'] = -1
-            self.previous_close_viewpoint['count'] = 0
-            self.gauge_pub.publish(Float32(data=0.0))
+        if (not self.start_position_reached) and (self.viewpoint_index.current
+                                                  != 0):
+            self.viewpoint_progresses[self.viewpoint_index.current][-1] = 0.0
+
+    def on_pose(self, msg: PoseWithCovarianceStamped):
+        pose = msg.pose.pose
+        self.vehicle_pose = pose
+        self.viewpoint_index.current = self.find_viewpoint_in_tolerance(pose)
+        self.update_viewpoint_progress()
+        if self.viewpoint_index.current < 0:
+            self.publish_viewpoint_progress_gauge(self.viewpoint_index.previous)
             return
-        if self.is_viewpoint_completed(i, self.viewpoints.viewpoints[i], pose):
-            self.viewpoints.viewpoints[i].completed = True
-            self.get_logger().info(
-                f'Viewpoint[{i}] completed. Uncompleted waypoints: '
-                f'{self.uncompleted_viewpoints()}')
+        self.viewpoint_index.previous = self.viewpoint_index.current
+        self.publish_viewpoint_progress_gauge(self.viewpoint_index.current)
+        if self.is_viewpoint_completed(
+                self.viewpoint_index.current,
+                self.viewpoints.viewpoints[self.viewpoint_index.current], pose):
+            self.viewpoints.viewpoints[
+                self.viewpoint_index.current].completed = True
+            self.get_logger().info(f'Viewpoint[{self.viewpoint_index.current}] '
+                                   'completed. Uncompleted waypoints: '
+                                   f'{self.uncompleted_viewpoints()}')
         uncompleted_waypoints = self.uncompleted_viewpoints()
         if not uncompleted_waypoints:
             self.finished_viewpoints = True
             self.running = False
             t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
-            msg = OverlayText()
-            msg.horizontal_alignment = msg.LEFT
-            msg.horizontal_distance = 10
-            msg.vertical_alignment = msg.TOP
-            msg.vertical_distance = 70
-            msg.fg_color.a = 1.0
-            msg.fg_color.g = 1.0
-            msg.line_width = 10
-            msg.text_size = 28.0
-            msg.width = 1000
-            msg.height = 50
-            msg.text = f'Finished after {t:.2f}s'
-            self.rviz_t_finish_pub.publish(msg)
+            self.publish_finish_time_overlay()
             self.get_logger().info(f'Finished after {t:.2f}s')
 
     def wrap_pi(self, value: float):
@@ -204,15 +258,9 @@ class ScenarioNode(Node):
         # ignore waypoints until start position has been reached
         if not self.start_position_reached:
             if i != 0:
+                self.publish_viewpoint_progress_gauge(-1)
                 return
-        if self.previous_close_viewpoint['index'] != i:
-            self.previous_close_viewpoint['count'] = 0
-        self.previous_close_viewpoint['index'] = i
-        self.previous_close_viewpoint['count'] += 1
-        self.gauge_pub.publish(
-            Float32(data=mean(self.completed_queues[i]) / 0.8))
-        completed = self.previous_close_viewpoint['count'] >= 40
-        completed = mean(self.completed_queues[i]) > 0.8
+        completed = mean(self.viewpoint_progresses[i]) >= 0.8
         if completed and not self.start_position_reached:
             self.start_position_reached = True
             self.t_start = self.get_clock().now()
@@ -270,7 +318,7 @@ class ScenarioNode(Node):
             marker.scale.y = 0.1
             marker.scale.z = 0.1
             markers.append(marker)
-        i = self.viewpoint_in_tolerance_index
+        i = self.viewpoint_index.current
         if i >= 0 and not self.viewpoints.viewpoints[i].completed:
             markers[i].color.r = 1.0
             markers[i].color.g = 1.0
@@ -278,43 +326,45 @@ class ScenarioNode(Node):
 
         return markers
 
+    def publish_finish_time_overlay(self, delete=False):
+        msg = self.finish_time_overlay_text_msg
+        msg.action = OverlayText.ADD
+        if delete:
+            msg.action = OverlayText.DELETE
+        else:
+            t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
+            msg.text = f'Finished after {t:.2f}s'
+        self.rviz_t_finish_pub.publish(msg)
+
+    def publish_status_overlay(self):
+        msg = self.status_overlay_text_msg
+        if self.running:
+            msg.fg_color.r = 1.0
+            msg.fg_color.g = 1.0
+            msg.fg_color.b = 0.0
+            if self.start_position_reached:
+                t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
+                msg.text = f'Time: {t:.2f}s'
+            else:
+                msg.text = 'Moving to start position'
+        else:
+            msg.fg_color.r = 1.0
+            msg.fg_color.g = 0.0
+            msg.fg_color.b = 0.0
+            msg.text = 'Not running'
+        self.rviz_overlay_status_pub.publish(msg)
+
     def on_timer(self):
         polygons_msg = PolygonsStamped()
         polygons_msg.header.stamp = self.get_clock().now().to_msg()
         polygons_msg.header.frame_id = 'map'
         polygons_msg.polygons = self.polygons
 
-        status_msg = OverlayText()
-        status_msg.action = status_msg.ADD
-        status_msg.horizontal_alignment = status_msg.LEFT
-        status_msg.horizontal_distance = 10
-        status_msg.vertical_alignment = status_msg.TOP
-        status_msg.vertical_distance = 10
-        status_msg.fg_color.a = 1.0
-        status_msg.fg_color.r = 1.0
-        status_msg.line_width = 10
-        status_msg.text_size = 28.0
-        status_msg.width = 1000
-        status_msg.height = 50
-        status_msg.text = "Not running"
         if self.running:
-            t_finish_msg = OverlayText()
-            t_finish_msg.action = t_finish_msg.DELETE
-            t_finish_msg.width = 1
-            t_finish_msg.height = 1
-            self.rviz_t_finish_pub.publish(t_finish_msg)
-            status_msg.fg_color.r = 1.0
-            status_msg.fg_color.g = 1.0
-            status_msg.fg_color.b = 0.0
             self.obstacles_pub.publish(polygons_msg)
             self.viewpoints_pub.publish(self.viewpoints)
-            status_msg.text = 'Moving to start position.'
 
-            if self.start_position_reached:
-                t = (self.get_clock().now() - self.t_start).nanoseconds * 1e-9
-                status_msg.text = f'Time: {t:.2f}s'
-        self.rviz_overlay_status_pub.publish(status_msg)
-
+        self.publish_status_overlay()
         markers = self.create_polygon_markers(self.polygons)
         markers.extend(self.create_viewpoint_marker())
         self.publish_marker_array(markers)
