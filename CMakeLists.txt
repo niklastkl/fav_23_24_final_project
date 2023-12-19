@@ -14,24 +14,13 @@ install(PROGRAMS
   nodes/path_follower.py
   nodes/path_planner.py
   nodes/position_controller.py
-  nodes/scenario_node.py
   nodes/yaw_controller.py
-  nodes/robot_marker_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
-)
-
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/PolygonsStamped.msg"
-  "msg/Viewpoint.msg"
-  "msg/Viewpoints.msg"
-  "srv/MoveToStart.srv"
-  "srv/SetPath.srv"
-  DEPENDENCIES builtin_interfaces std_msgs geometry_msgs nav_msgs
 )
 
 ament_package()

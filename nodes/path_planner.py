@@ -4,12 +4,12 @@ from enum import Enum, auto
 
 import numpy as np
 import rclpy
-from final_project.msg import Viewpoints
-from final_project.srv import MoveToStart, SetPath
 from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from nav_msgs.msg import OccupancyGrid, Path
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from scenario_msgs.msg import Viewpoints
+from scenario_msgs.srv import MoveToStart, SetPath
 from std_msgs.msg import Header
 from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
