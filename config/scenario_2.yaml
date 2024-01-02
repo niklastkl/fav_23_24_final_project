@@ -12,6 +12,7 @@ viewpoints:
     qy: 0.0
     qz: 1.0
     qw: 0.0
+    frame_id: "map"
   - x: 1.5
     y: 3.5
     z: -0.5
@@ -19,3 +20,4 @@ viewpoints:
     qy: 0.0
     qz: 0.0
     qw: 1.0
+    frame_id: "map"

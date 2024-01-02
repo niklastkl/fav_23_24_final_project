@@ -35,6 +35,7 @@ viewpoints:
     qy: 0.0
     qz: 0.3826834
     qw: 0.9238795
+    frame_id: "map"
   - x: 0.5
     y: 3.25
     z: -0.5
@@ -42,6 +43,7 @@ viewpoints:
     qy: 0.0
     qz: 0.3826834
     qw: 0.9238795
+    frame_id: "map"
   - x: 1.5
     y: 0.5
     z: -0.5
@@ -49,3 +51,4 @@ viewpoints:
     qy: 0.0
     qz: 1.0
     qw: 0.0
+    frame_id: "map"
