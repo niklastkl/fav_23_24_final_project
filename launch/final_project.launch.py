@@ -72,7 +72,7 @@ def generate_launch_description() -> LaunchDescription:
             ],
         ),
         Node(
-            executable='scenario_node.py',
+            executable='scenario_node',
             package='fav',
             parameters=[
                 {
