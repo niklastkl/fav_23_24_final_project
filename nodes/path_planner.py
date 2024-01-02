@@ -128,7 +128,9 @@ class PathPlanner(Node):
         return response
 
     def move_to_start(self, p0: Pose, p1: Pose):
-        path_segment = self.compute_path_segment(p0, p1, check_collision=False)
+        path_segment = self.compute_simple_path_segment(p0,
+                                                        p1,
+                                                        check_collision=False)
         request = SetPath.Request()
         request.path = path_segment['path']
         answer = self.set_path_client.call(request)
@@ -150,7 +152,15 @@ class PathPlanner(Node):
         ]
         return collision_indices
 
-    def compute_path_segment(self, p0: Pose, p1: Pose, check_collision=True):
+    def compute_a_star_segment(self, p0: Pose, p1: Pose):
+        # TODO: implement your algorithms
+        # you probably need the gridmap: self.occupancy_grid
+        pass
+
+    def compute_simple_path_segment(self,
+                                    p0: Pose,
+                                    p1: Pose,
+                                    check_collision=True):
         p0_2d = world_to_matrix(p0.position.x, p0.position.y, self.cell_size)
         p1_2d = world_to_matrix(p1.position.x, p1.position.y, self.cell_size)
         # now we should/could apply some sophisticated algorithm to compute
@@ -280,11 +290,15 @@ class PathPlanner(Node):
 
         # now we can finally call our super smart function to compute
         # the path piecewise between the viewpoints
-        return [
-            self.compute_path_segment(viewpoint_poses[i - 1],
-                                      viewpoint_poses[i])
-            for i in range(1, len(viewpoint_poses))
-        ]
+        path_segments = []
+        for i in range(1, len(viewpoint_poses)):
+            segment = self.compute_simple_path_segment(viewpoint_poses[i - 1],
+                                                       viewpoint_poses[i])
+            # alternatively call your own implementation
+            # segment = self.compute_a_star_segment(viewpoint_poses[i - 1],
+            #                                       viewpoint_poses[i])
+            path_segments.append(segment)
+        return path_segments
 
     def handle_no_collision_free_path(self):
         self.get_logger().fatal('We have a collision in our current segment!'
