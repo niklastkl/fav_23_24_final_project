@@ -99,7 +99,7 @@ def generate_launch_description() -> LaunchDescription:
         executable='rviz2',
         package='rviz2',
         name='rviz2',
-        arguments=['-d', rviz_file],
+        arguments=['-d', rviz_file, '--ros-args', '--log-level', 'error'],
     )
     launch_description.add_action(action)
 
