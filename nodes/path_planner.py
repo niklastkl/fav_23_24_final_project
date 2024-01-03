@@ -376,7 +376,6 @@ class PathPlanner(Node):
             self.get_logger().info('Cell size changed. Recomputation required.')
             self.recomputation_required = True
             self.cell_size = msg.info.resolution
-        # TODO(lennartalff): Check if grid map changed?
 
     def init_path_marker(self):
         msg = Marker()
