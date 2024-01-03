@@ -82,7 +82,7 @@ def generate_launch_description() -> LaunchDescription:
             ],
         ),
         Node(
-            executable='robot_marker_publisher.py',
+            executable='robot_marker_publisher',
             package='fav',
             parameters=[
                 {
