@@ -1,25 +1,22 @@
-#!/usr/bin/env python3
+import copy
+
 import geometry_msgs.msg
 import numpy as np
-import rclpy
+import matplotlib.pyplot as plt
+
 from geometry_msgs.msg import (
     PointStamped,
     Pose,
     PoseStamped,
     PoseWithCovarianceStamped,
 )
-from hippo_msgs.msg import Float64Stamped
-from nav_msgs.msg import Path
-from rclpy.node import Node
-from scenario_msgs.srv import SetPath
-from std_srvs.srv import Trigger
 from tf_transformations import euler_from_quaternion
+
 
 
 def distance(p0: Pose, p1: Pose):
     return np.sqrt((p1.position.x - p0.position.x) ** 2 + (p1.position.y - p0.position.y) ** 2 + (
             p1.position.z - p0.position.z) ** 2)
-
 
 class Trajectory:
     def __init__(self, path: [PoseStamped], max_velocity, max_acceleration, max_yaw_velocity, max_yaw_acceleration):
@@ -120,125 +117,56 @@ class PathTrajectory:
                 return self.dds_max * self.key_times[0] ** 2 - 1 / 2.0 * self.dds_max * (
                         self.key_times[2] - t) ** 2 + self.ds_max * (self.key_times[1] - self.key_times[0])
 
-
-class PathFollower(Node):
-
-    def __init__(self):
-        super().__init__(node_name='path_follower')
-        self.look_ahead_distance = 0.3
-        self.target_index = -1
-        self.path: list[PoseStamped] = None
-        self.trajectory = None
-        self.start_time = None
-
-        self.max_velocity = 1e-6
-        self.max_acceleration = 1e-6
-        self.max_yaw_velocity = 1e-6
-        self.max_yaw_acceleration = 1e-6
-
-        self.declare_parameters(namespace='',
-                                parameters=[('max_velocity', rclpy.Parameter.Type.DOUBLE),
-                                            ('max_acceleration', rclpy.Parameter.Type.DOUBLE),
-                                            ('max_yaw_velocity', rclpy.Parameter.Type.DOUBLE),
-                                            ('max_yaw_acceleration', rclpy.Parameter.Type.DOUBLE),
-                                            ])
-        param = self.get_parameter('max_velocity')
-        self.get_logger().info(f'{param.name}={param.value}')
-        self.max_velocity = param.value
-
-        param = self.get_parameter('max_acceleration')
-        self.get_logger().info(f'{param.name}={param.value}')
-        self.max_acceleration = param.value
-
-        param = self.get_parameter('max_yaw_velocity')
-        self.get_logger().info(f'{param.name}={param.value}')
-        self.max_yaw_velocity = param.value
-
-        param = self.get_parameter('max_yaw_acceleration')
-        self.get_logger().info(f'{param.name}={param.value}')
-        self.max_yaw_acceleration = param.value
-
-        self.init_services()
-        self.yaw_pub = self.create_publisher(Float64Stamped,
-                                             'yaw_controller/setpoint', 1)
-        self.position_pub = self.create_publisher(
-            PointStamped, 'position_controller/setpoint', 1)
-        self.path_pub = self.create_publisher(Path, '~/current_path', 1)
-        self.look_ahead_distance = 0.3
-        frequency = float(50)
-        self.trajectory_timer = self.create_timer(1 / frequency, self.send_setpoint)
-
-    def init_services(self):
-        self.set_path_service = self.create_service(SetPath, '~/set_path',
-                                                    self.serve_set_path)
-        self.path_finished_service = self.create_service(
-            Trigger, '~/path_finished', self.serve_path_finished)
-
-    def serve_set_path(self, request, response):
-        self.path = request.path.poses
-        self.trajectory = None
-        self.target_index = 0
-        self.get_logger().info(
-            f'New path with {len(self.path)} poses has been set.')
-        response.success = True
-        return response
-
-    def serve_path_finished(self, request, response: Trigger.Response):
-        self.path = None
-        self.trajectory = None
-        response.success = True
-        self.get_logger().info('Path finished. Going to idle mode.')
-        return response
-
-    def send_setpoint(self):
-        if not self.path:
-            return
-        if not self.update_setpoint():
-            return
-        stamp = self.get_clock().now().to_msg()
-
-        msg = Float64Stamped()
-        msg.data = self.target_yaw
-        msg.header.stamp = stamp
-        msg.header.frame_id = 'map'
-        self.yaw_pub.publish(msg)
-
-        position = geometry_msgs.msg.Point(x=self.target_position[0, 0], y=self.target_position[1, 0],
-                                           z=self.target_position[2, 0])
-
-        msg = PointStamped(header=msg.header, point=position)
-        self.position_pub.publish(msg)
-        if self.path:
-            msg = Path()
-            msg.header.frame_id = 'map'
-            msg.header.stamp = stamp
-            msg.poses = self.path
-            self.path_pub.publish(msg)
-
-    def update_setpoint(self):
-        if not self.path:
-            self.target_index = 0
-            self.target_position = None
-            self.target_yaw = None
-            return False
-        if not self.trajectory:
-            self.trajectory = Trajectory(self.path, self.max_velocity, self.max_acceleration, self.max_yaw_velocity,
-                                         self.max_yaw_acceleration)
-            self.start_time = self.get_clock().now()
-
-        t = (self.get_clock().now() - self.start_time).nanoseconds * 1e-9
-        self.target_position, self.target_yaw = self.trajectory.get_pose(t)
-        return True
-
-
 def main():
-    rclpy.init()
-    node = PathFollower()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+    max_velocity = 2.0
+    max_acceleration = 0.1
+    max_yaw_velocity = 0.5
+    max_yaw_acceleration = 0.2
+    path = list()
+    pose_stamped = PoseStamped()
+    pose_stamped.pose.position.x = 0.1
+    pose_stamped.pose.position.y = 0.2
+    pose_stamped.pose.position.z = 0.3
+    pose_stamped.pose.orientation.w = 1.0
+    pose_stamped.pose.orientation.x = 0.0
+    pose_stamped.pose.orientation.y = 0.0
+    pose_stamped.pose.orientation.z = 0.0
+    path.append(copy.deepcopy(pose_stamped))
+    pose_stamped.pose.position.x = 0.6
+    pose_stamped.pose.position.y = 0.2
+    pose_stamped.pose.position.z = 0.5
+    pose_stamped.pose.orientation.w = 3 / np.sqrt(2)
+    pose_stamped.pose.orientation.x = 0.0
+    pose_stamped.pose.orientation.y = 0.0
+    pose_stamped.pose.orientation.z = 1 / 2
+    path.append(copy.deepcopy(pose_stamped))
+    pose_stamped.pose.position.x = 1.1
+    pose_stamped.pose.position.y = 0.2
+    pose_stamped.pose.position.z = 1.0
+    pose_stamped.pose.orientation.w = 1 / np.sqrt(2)
+    pose_stamped.pose.orientation.x = 0.0
+    pose_stamped.pose.orientation.y = 0.0
+    pose_stamped.pose.orientation.z = 1 / np.sqrt(2)
+    path.append(copy.deepcopy(pose_stamped))
 
 
-if __name__ == '__main__':
+    trajectory = Trajectory(path, max_velocity, max_acceleration, max_yaw_velocity, max_yaw_acceleration)
+    t_samp = np.linspace(0, 20, 2000)
+    p_samp = np.zeros((3, len(t_samp)))
+    yaw_samp = np.zeros_like(t_samp)
+    for i in range(len(t_samp)):
+        tmp_position, yaw_samp[i] = trajectory.get_pose(t_samp[i])
+        p_samp[:, i] = tmp_position.reshape(-1)
+
+    plt.figure()
+    plt.plot(t_samp, p_samp[0, :], label="x")
+    plt.plot(t_samp, p_samp[1, :], label="y")
+    plt.plot(t_samp, p_samp[2, :], label="z")
+    plt.plot(t_samp, yaw_samp, label="yaw")
+    plt.grid()
+    plt.legend()
+    plt.show()
+
+
+if __name__ == "__main__":
     main()
