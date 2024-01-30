@@ -164,6 +164,7 @@ def multiple_matrix_indeces_to_world(points, grid_size):
 
 
 def compute_discrete_line(x0, y0, x1, y1):
+    # calculates the points of a discrete grid that are intersected by the line, defined by its start- and endpoint
     dx = abs(x1 - x0)
     sx = 1 if x0 < x1 else -1
     dy = -abs(y1 - y0)
@@ -191,15 +192,17 @@ def compute_discrete_line(x0, y0, x1, y1):
     return points
 
 
-def null_heuristic(state, problem: SearchProblem):
-    return 0
+def null_heuristic(state: tuple, problem: SearchProblem) -> float:
+    return 0.0
 
 
-def euclidean_heuristic(state, problem: Point2PointProblem):
+def euclidean_heuristic(state: tuple, problem: Point2PointProblem) -> float:
+    # calculates euclidean distance
     return np.sqrt(np.power(problem.goal_state[0] - state[0], 2) + np.power(problem.goal_state[1] - state[1], 2))
 
 
-def viewpoint_heuristic(state, problem: ViewpointsProblem):
+def viewpoint_heuristic(state: tuple, problem: ViewpointsProblem) -> float:
+    # calculates the minimum distance to complete all viewpoints considering the order (traveling salesman problem)
     total_dist = float("inf")
     active_viewpoints = [problem.viewpoints[i] for i in range(len(problem.viewpoints)) if (state[1][i] == 0)]
     if not active_viewpoints:
@@ -243,6 +246,7 @@ class PathPlanner(Node):
         self.occupancy_matrix: np.ndarray = None
         self.progress = -1.0
         self.path_segments = []
+        self.path_counter = 0
 
         self.compute_full_path = False
         self.search_to_start = False
@@ -331,43 +335,27 @@ class PathPlanner(Node):
         ]
         return collision_indices
 
-    def a_star(self, problem: SearchProblem, heuristic=null_heuristic, consistent_heuristic=False):
-        if consistent_heuristic:
-            expanded = set()
-            fringe = PriorityQueue()
-            fringe.push((problem.get_start_state(), [], 0), heuristic(problem.get_start_state(), problem))
-            while (not fringe.is_empty()):
-                node = fringe.pop()
-                state, actions, cost = node
-                if problem.is_goal_state(state):
-                    return actions
-                if state in expanded:
-                    continue
-                expanded.add(state)
-                successors = problem.get_successors(state)
-                for next_state, next_action, next_cost in successors:
-                    fringe.push((next_state, actions + [next_action], cost + next_cost),
-                                cost + next_cost + heuristic(next_state, problem))
-        else:
-            expanded = set()
-            fringe = PriorityQueue()
-            fringe.push(problem.get_start_state(), heuristic(problem.get_start_state(), problem), ([], 0))
-            while (not fringe.is_empty()):
-                node = fringe.pop()
-                state, (actions, cost) = node
-                if problem.is_goal_state(state):
-                    return actions
-                if state in expanded:
-                    continue
-                expanded.add(state)
-                successors = problem.get_successors(state)
-                for next_state, next_action, next_cost in successors:
-                    fringe.update(next_state, cost + next_cost + heuristic(next_state, problem),
-                                  (actions + [next_action], cost + next_cost))
+    def a_star(self, problem: SearchProblem, heuristic=null_heuristic):
+        expanded = set()
+        fringe = PriorityQueue()
+        fringe.push(problem.get_start_state(), heuristic(problem.get_start_state(), problem), ([], 0))
+        while (not fringe.is_empty()):
+            node = fringe.pop()
+            state, (actions, cost) = node
+            if problem.is_goal_state(state):
+                return actions
+            if state in expanded:
+                continue
+            expanded.add(state)
+            successors = problem.get_successors(state)
+            for next_state, next_action, next_cost in successors:
+                fringe.update(next_state, cost + next_cost + heuristic(next_state, problem),
+                              (actions + [next_action], cost + next_cost))
         print("No feasible solution found!")
         return None
 
     def is_walkable(self, p0, p1):
+        # checks if a line from p0 to p1 intersects any occupied fields of the occupancy matrix
         # https://www.gamedeveloper.com/programming/toward-more-realistic-pathfinding
         # http://eugen.dedu.free.fr/projects/bresenham/
         infeasible_point = lambda x, y: self.occupancy_matrix[x, y] > 0
@@ -451,13 +439,14 @@ class PathPlanner(Node):
                 if infeasible_point(y, x):
                     return False
                 errorprev = error
-        if (not y == y2) | (
-        not x == x2):  # the last point (y2,x2) has to be the same with the last point of the algorithm
+        if (not y == y2) | (not x == x2):  # the last point (y2,x2) has to be the same with the last point of the algorithm
             print("Algorithm did not end at endpoint!")
             return False
         return True
 
     def straighten_path(self, points):
+        # postprocessing, reduces "zig-zag" behavior of A-star by deleting intermediate points if feasible for collisons
+        # see: https://www.gamedeveloper.com/programming/toward-more-realistic-pathfinding
         idxs = [0]
         i = 1
         while (i + 1 < len(points)):
@@ -481,6 +470,7 @@ class PathPlanner(Node):
         return resampled_points
 
     def postprocess_path(self, p0: Pose, p1: Pose, points: [tuple], check_collisions=True):
+        # straighten path and interpolate yaw
         if check_collisions:
             collision_indices = self.has_collisions(points)
         else:
@@ -540,10 +530,11 @@ class PathPlanner(Node):
         return {'path': path, 'collision_indices': collision_indices}
 
     def compute_full_a_star(self, p0: Pose, viewpoints: [Pose]):
+        # applies A-star to complete path planning problem considering the order of viewpoints targeted
         p0_2d = tuple(world_to_matrix(p0.position.x, p0.position.y, self.cell_size))
         viewpoints_2d = [tuple(world_to_matrix(p.position.x, p.position.y, self.cell_size)) for p in viewpoints]
         search_problem = ViewpointsProblem(p0_2d, viewpoints_2d, self.occupancy_matrix)
-        search_function = lambda problem: self.a_star(problem, heuristic=viewpoint_heuristic, consistent_heuristic=True)
+        search_function = lambda problem: self.a_star(problem, heuristic=viewpoint_heuristic)
         start_time = time.time()
         actions = search_function(search_problem)
         end_time = time.time()
@@ -566,12 +557,10 @@ class PathPlanner(Node):
         return path_segments
 
     def compute_a_star_segment(self, p0: Pose, p1: Pose):
-        # TODO: implement your algorithms
-        # you probably need the gridmap: self.occupancy_grid
         p0_2d = tuple(world_to_matrix(p0.position.x, p0.position.y, self.cell_size))
         p1_2d = tuple(world_to_matrix(p1.position.x, p1.position.y, self.cell_size))
         search_problem = Point2PointProblem(p0_2d, p1_2d, self.occupancy_matrix)
-        search_function = lambda problem: self.a_star(problem, heuristic=euclidean_heuristic, consistent_heuristic=False)
+        search_function = lambda problem: self.a_star(problem, heuristic=euclidean_heuristic)
         start_time = time.time()
         actions = search_function(search_problem)
         end_time = time.time()

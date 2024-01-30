@@ -39,12 +39,15 @@ class Trajectory:
 
         mutual_distances = [distance(path[i].pose, path[i + 1].pose) for i in range(len(path) - 1)]
         self.cumulative_distances = [0.0] + [sum(mutual_distances[0:i + 1]) for i in range(len(mutual_distances))]
-        # calculation of path segments as in https://www.osrobotics.org/osr/planning/time_parameterization.html
+        # calculation of path segments as in https://www.osrobotics.org/osr/planning/time_parameterization.html,
+        # a setpoint on the trajectory is then calculated from the progress of distance along the scalar path trajectory
+        # and interpolated between key frames
         ds_max = max_velocity / self.cumulative_distances[-1]
         dds_max = max_acceleration / self.cumulative_distances[-1]
         self.path_trajectory = PathTrajectory(ds_max, dds_max)
 
-        # check if resulting yaw trajectory is within limits and scale path trajectory accordingly
+        # check if resulting yaw trajectory is within limits and scale path trajectory accordingly,
+        # depending on bounds on velocity and acceleration determine the number of path segments
         time_scaling = 1.0
         path_keypoints = [self.path_trajectory.path_variable(t) for t in self.path_trajectory.key_times]
         yaw_keypoints = [keypoint * (self.yawbounds[1] - self.yawbounds[0]) + self.yawbounds[0] for keypoint in
@@ -81,7 +84,7 @@ class Trajectory:
 
 
 class PathTrajectory:
-    # rest-to-rest-trajectory consisting of a constant acceleration, a constant velocity and a constant deceleration segment
+    # scalar rest-to-rest-trajectory consisting of a constant acceleration, a constant velocity and a constant deceleration segment
     # https://www.osrobotics.org/osr/planning/time_parameterization.html
     def __init__(self, ds_max, dds_max):
         self.ds_max = ds_max
@@ -98,9 +101,10 @@ class PathTrajectory:
         self.scaling = 1.0
 
     def set_scaling(self, scaling):
+        # scale trajectory in time
         self.scaling = scaling
         self.key_times = [time * self.scaling for time in self.key_times]
-        self.dds_max /= scaling**2
+        self.dds_max /= scaling ** 2
         self.ds_max /= scaling
 
     def path_variable(self, t):

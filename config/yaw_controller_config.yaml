@@ -1,7 +1,7 @@
 /**: # wildcard for the node name
   ros__parameters:
     gains:
-      p: 0.2
-      i: 0.02
-      d: 0.2
+      p: 0.5
+      i: 0.2
+      d: 0.3
     filter_gain: 0.1

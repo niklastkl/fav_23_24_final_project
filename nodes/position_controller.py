@@ -167,6 +167,8 @@ class PositionController(Node):
             return np.zeros((3, 1))
         error = self.setpoint - current_position
         self.error_integral += dt * error
+        # use of derivatives of position and setpoint instead of deravive of error such that the different time stamps
+        # of setpoints and positions are considered
         dposition = (current_position - self.last_position) / max(dt, 1e-6)
         derror = self.moving_average_filter(self.dsetpoint - dposition)
         p_component = self.K_p @ error
